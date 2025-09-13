@@ -863,7 +863,7 @@ void Merge_Profiles(char *dpwd, char *dbrt)
   { int f;
 
     sprintf(fname,"%s/%s.prof",dpwd,dbrt);
-    f = open(fname,O_WRONLY|O_CREAT|O_TRUNC,S_IRWXU|S_IRWXG|S_IRWXO);
+    f = open(fname,O_WRONLY|O_CREAT|O_TRUNC,0666);
     if (f == -1)
       { fprintf(stderr,"%s: Cannot open external file %s for writing\n",Prog_Name,fname);
         Clean_Exit(1);
@@ -893,7 +893,7 @@ void Merge_Profiles(char *dpwd, char *dbrt)
         int64 zero = 0;
             
         sprintf(fname,"%s/.%s.pidx.%d",dpwd,dbrt,t+1);
-        f = open(fname,O_WRONLY|O_CREAT|O_TRUNC,S_IRWXU|S_IRWXG|S_IRWXO);
+        f = open(fname,O_WRONLY|O_CREAT|O_TRUNC,0666);
         if (f == -1)
           { fprintf(stderr,"%s: Cannot open external file %s\n",Prog_Name,fname);
             Clean_Exit(1);
@@ -901,7 +901,7 @@ void Merge_Profiles(char *dpwd, char *dbrt)
         aname = Strdup(fname,"Allocating stream names");
 
         sprintf(fname,"%s/.%s.prof.%d",dpwd,dbrt,t+1);
-        g = open(fname,O_WRONLY|O_CREAT|O_TRUNC,S_IRWXU|S_IRWXG|S_IRWXO);
+        g = open(fname,O_WRONLY|O_CREAT|O_TRUNC,0666);
         if (g == -1)
           { fprintf(stderr,"%s: Cannot open external file %s\n",Prog_Name,fname);
             Clean_Exit(1);

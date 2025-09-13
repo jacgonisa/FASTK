@@ -431,7 +431,7 @@ void Merge_Tables(char *path, char *root)
 
   for (t = 0; t < NTHREADS; t++)
     { sprintf(fname,"%s/.%s.ktab.%d",path,root,t+1);
-      f = open(fname,O_CREAT|O_TRUNC|O_WRONLY,S_IRWXU);
+      f = open(fname,O_CREAT|O_TRUNC|O_WRONLY,0666);
       if (f == -1)
         { fprintf(stderr,"\n%s: Cannot open external file %s for writing\n",Prog_Name,fname);
           Clean_Exit(1);
@@ -486,7 +486,7 @@ void Merge_Tables(char *path, char *root)
       pindex[x] += pindex[x-1];
 
     sprintf(fname,"%s/%s.ktab",path,root);
-    f = open(fname,O_CREAT|O_TRUNC|O_WRONLY,S_IRWXU);
+    f = open(fname,O_CREAT|O_TRUNC|O_WRONLY,0666);
     if (f == -1)
       { fprintf(stderr,"\n%s: Cannot open external file %s for writing\n",Prog_Name,fname);
         Clean_Exit(1);

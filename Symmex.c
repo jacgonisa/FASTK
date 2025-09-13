@@ -313,7 +313,7 @@ static void Double_Up(Kmer_Stream *T, int nbits, int nblocks, char *output)
     }
   free(block->buff);
 
-  nid = open(Catenate(path,"/.",root,".ktab.1"),O_CREAT|O_TRUNC|O_WRONLY,S_IRWXU);
+  nid = open(Catenate(path,"/.",root,".ktab.1"),O_CREAT|O_TRUNC|O_WRONLY,0666);
   if (nid == -1)
     { fprintf(stderr,"\n%s: Cannot open external file %s for writing\n",
                      Prog_Name,Catenate(path,"/.",root,".ktab.1"));
@@ -404,7 +404,7 @@ static void Double_Up(Kmer_Stream *T, int nbits, int nblocks, char *output)
     for (x = 1; x < ixlen; x++)
       prefix[x] += prefix[x-1];
 
-    nid = open(Catenate(path,"/",root,".ktab"),O_CREAT|O_TRUNC|O_WRONLY,S_IRWXU);
+    nid = open(Catenate(path,"/",root,".ktab"),O_CREAT|O_TRUNC|O_WRONLY,0666);
     if (nid == -1)
       { fprintf(stderr,"\n%s: Cannot open external file %s for writing\n",
                        Prog_Name,Catenate(path,"/",root,".ktab"));
