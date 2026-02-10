@@ -4,11 +4,15 @@
 **_First:   July 22, 2020_**<br>
 **_Current: April 18, 2021_**</font>
 
+> **Disclaimer:** FastK is the original work of Gene Myers.  
+> The `Kplex` wrapper added in this fork is a convenience utility only; it does not change the FastK core algorithms.
+
 - [Command Line](#command-line)
   - [FastK](#fastk)
   - [Fastrm, Fastcp, & Fastmv](#fastrm)
   - [Fastmerge](#fastmerge)
   - [Fastcat](#fastcat)
+  - [Kplex](#kplex)
 
 - [HPC Operation](#hpc)
 
@@ -118,6 +122,38 @@ They could also be used to distinguish haplotypes in a trio-based project, by pr
 relative profiles with respect to the k&#8209;mers of the father and mother sequencing data sets.
 If this version of the -p option is specified then only profiles are produced -- the
 -t option is ignored and the default histogram is not produced.
+
+
+<a name="kplex"></a>
+
+## Kplex
+
+`Kplex` is a small convenience wrapper (added in this fork) that runs **FastK** followed by **Histex** over a user‑defined k range and writes a single CSV suitable for k‑plexity analysis.
+
+**Usage**
+
+```
+Kplex -i genome.fa -k 5:151:1 -h 1:1000 [-T 4] [-o prefix] [-c output.csv] [-K]
+```
+
+**Arguments**
+- `-i` input FASTA
+- `-k` k range in the form `start:end:step` (e.g., `5:151:1`)
+- `-h` Histex histogram range (passed as `-h<start>:<end>`; e.g., `1:1000`)
+- `-T` FastK threads (default 4)
+- `-o` prefix for intermediate outputs (default: basename of FASTA)
+- `-c` output CSV (default: `<prefix>.kplex.csv`)
+- `-K` keep intermediate `.hist` and Histex output files
+
+**Output**
+CSV with columns:
+
+```
+k,unique_kmers,total_kmers,fraction_unique
+```
+
+**Notes**
+- `Kplex` does not alter FastK’s core behavior; it is a wrapper that orchestrates FastK + Histex and aggregates results into one file.
 
 The &#8209;c option asks FastK to first homopolymer compress the input sequences before analyzing
 the k&#8209;mer content.  In a homopolymer compressed sequence, every substring of 2 or more a's
