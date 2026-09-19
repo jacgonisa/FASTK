@@ -246,10 +246,12 @@ int main(int argc, char *argv[])
   int budget = (thread_budget > 0) ? thread_budget : (int) cores;
   if (budget < 1) budget = 1;
 
-  // Per-job memory estimate for FastK: a fixed working-set component plus a
-  // term that scales with genome size (measured ~5 GB for a 140 Mb genome).
+  // Per-job memory estimate for FastK: a large fixed working-set component plus
+  // a term that scales with genome size. Calibrated from measured single-FastK
+  // peak RSS: ~5 GB for a 140 Mb genome and ~11 GB for a 3.1 Gb genome
+  // (=> ~5.0 + 2.0*genome_gb), with a small safety margin.
   double genome_gb = file_size_bytes(input) / 1e9;
-  double est_job_gb = 1.5 + 25.0 * genome_gb;
+  double est_job_gb = 5.5 + 2.2 * genome_gb;
   if (est_job_gb < 1.0) est_job_gb = 1.0;
 
   int jobs_by_ram = (int) ((avail_gb * 0.90) / est_job_gb);
