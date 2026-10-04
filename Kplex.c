@@ -22,7 +22,8 @@ static void usage(const char *prog)
   fprintf(stderr,
           "Usage: %s -i genome.fa -k start:end:step -h h1:h2 [-T threads] [-P jobs] [-M mem_gb] [-o prefix] [-c out.csv] [-K]\n"
           "  -i  input FASTA\n"
-          "  -k  k range, e.g. 5:151:1\n"
+          "  -k  k values: arithmetic range 'start:end:step' (e.g. 5:151:1)\n"
+          "      OR an explicit comma list for non-uniform schedules (e.g. 5,7,11,16,23,33,48,71,103,151)\n"
           "  -h  Histex range, e.g. 1:1000 (passed as -h1:1000)\n"
           "  -T  total thread budget (default: auto = number of cores)\n"
           "  -P  parallel FastK jobs to run at once (default: auto from cores & RAM)\n"
@@ -43,6 +44,37 @@ static int parse_k_range(const char *s, int *k0, int *k1, int *step)
     return 1;
   }
   return 0;
+}
+
+static int cmp_int(const void *a, const void *b)
+{ int x = *(const int *) a, y = *(const int *) b; return (x > y) - (x < y); }
+
+// Parse an explicit comma-separated list of k values, e.g. "5,7,11,16,23".
+// Returns a malloc'd array (sorted ascending, de-duplicated) and sets *n_out,
+// or NULL on error. This is what enables non-uniform ("sketched") k-schedules.
+static int *parse_k_list(const char *s, int *n_out)
+{
+  int cap = 1;
+  for (const char *p = s; *p; p++) if (*p == ',') cap++;
+  int *arr = (int *) malloc((size_t) cap * sizeof(int));
+  if (arr == NULL) return NULL;
+  char *copy = strdup(s);
+  if (copy == NULL) { free(arr); return NULL; }
+  int n = 0;
+  for (char *tok = strtok(copy, ","); tok; tok = strtok(NULL, ","))
+  {
+    while (*tok == ' ' || *tok == '\t') tok++;
+    int v = atoi(tok);
+    if (v > 0) arr[n++] = v;
+  }
+  free(copy);
+  if (n < 1) { free(arr); return NULL; }
+  qsort(arr, (size_t) n, sizeof(int), cmp_int);
+  int m = 0;
+  for (int i = 0; i < n; i++)
+    if (i == 0 || arr[i] != arr[i - 1]) arr[m++] = arr[i];
+  *n_out = m;
+  return arr;
 }
 
 static char *basename_noext(const char *path)
@@ -205,7 +237,8 @@ int main(int argc, char *argv[])
   if (input == NULL || k_range == NULL || h_range == NULL) { usage(argv[0]); return 1; }
 
   int k0=0, k1=0, step=0;
-  if (!parse_k_range(k_range, &k0, &k1, &step))
+  int have_list = (strchr(k_range, ',') != NULL);
+  if (!have_list && !parse_k_range(k_range, &k0, &k1, &step))
   {
     fprintf(stderr, "ERROR: invalid -k range: %s\n", k_range);
     return 1;
@@ -229,14 +262,25 @@ int main(int argc, char *argv[])
     outcsv = auto_out;
   }
 
-  // ---- build list of k values ----
-  int nk = (k1 - k0) / step + 1;
-  if (nk < 1) nk = 1;
-  int *ks = (int *) malloc((size_t) nk * sizeof(int));
-  if (ks == NULL) { fprintf(stderr, "ERROR: cannot allocate k list\n"); free(auto_prefix); free(auto_out); return 1; }
-  int idx = 0;
-  for (int k = k0; k <= k1 && idx < nk; k += step) ks[idx++] = k;
-  nk = idx;
+  // ---- build list of k values (arithmetic range or explicit comma list) ----
+  int nk;
+  int *ks;
+  if (have_list)
+  {
+    ks = parse_k_list(k_range, &nk);
+    if (ks == NULL)
+    { fprintf(stderr, "ERROR: invalid -k list: %s\n", k_range); free(auto_prefix); free(auto_out); return 1; }
+  }
+  else
+  {
+    nk = (k1 - k0) / step + 1;
+    if (nk < 1) nk = 1;
+    ks = (int *) malloc((size_t) nk * sizeof(int));
+    if (ks == NULL) { fprintf(stderr, "ERROR: cannot allocate k list\n"); free(auto_prefix); free(auto_out); return 1; }
+    int idx = 0;
+    for (int k = k0; k <= k1 && idx < nk; k += step) ks[idx++] = k;
+    nk = idx;
+  }
 
   // ---- resource-aware parallel plan ----
   long cores = detect_cores();
