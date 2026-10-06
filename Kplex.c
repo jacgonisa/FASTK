@@ -2,7 +2,11 @@
 // Usage:
 //   Kplex -i genome.fa -k 5:151:1 -h 1:1000 [-T threads] [-P jobs] [-M mem_gb] [-o prefix] [-c out.csv] [-K]
 //
-// Produces CSV with columns: k,unique_kmers,total_kmers,fraction_unique
+// Produces CSV with columns: k,unique_kmers,total_kmers,fraction_unique,total_kmers_observed
+//   total_kmers          = exact number of k-mer positions (from ACGT run lengths)
+//   fraction_unique      = unique_kmers / total_kmers
+//   total_kmers_observed = Sum(mult*count) over the FastK histogram, which undercounts
+//                          k-mers above FastK's count cap (32767); kept as a diagnostic
 //
 // Each k is an independent FastK+Histex computation. Kplex auto-detects the
 // number of CPU cores and available RAM and runs several k values concurrently
@@ -89,6 +93,85 @@ static char *basename_noext(const char *path)
   char *dot = strrchr(out, '.');
   if (dot) *dot = '\0';
   return out;
+}
+
+// ---- exact total k-mers from sequence lengths ------------------------------
+// FastK breaks the sequence at every non-ACGT character (case-insensitive) and
+// its counts saturate at 32767, so Sum(mult*count) over the histogram undercounts
+// T(k) for highly repeated k-mers. The exact number of k-mer positions FastK
+// considers is T(k) = Sum over maximal ACGT runs of max(0, len-k+1), which we get
+// from one pass over the FASTA: T(k) = S_k - (k-1)*N_k, where N_k / S_k are the
+// number / total length of runs with len >= k.
+
+static double *Texact = NULL;   // Texact[k], 0 <= k <= kmax_glob; NULL if unavailable
+static int kmax_glob = 0;
+
+static int scan_acgt_runs(const char *path, int kmax)
+{
+  FILE *fp;
+  int piped = 0;
+  size_t plen = strlen(path);
+  if (plen > 3 && strcmp(path + plen - 3, ".gz") == 0)
+  {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "gzip -dc \"%s\"", path);
+    fp = popen(cmd, "r");
+    piped = 1;
+  }
+  else
+    fp = fopen(path, "r");
+  if (fp == NULL) return 0;
+
+  unsigned long long *cnt = (unsigned long long *) calloc((size_t) kmax + 2, sizeof(unsigned long long));
+  if (cnt == NULL) { if (piped) pclose(fp); else fclose(fp); return 0; }
+  unsigned long long big_n = 0, big_sum = 0, run = 0;
+  unsigned char acgt[256] = {0};
+  acgt['A'] = acgt['C'] = acgt['G'] = acgt['T'] = 1;
+  acgt['a'] = acgt['c'] = acgt['g'] = acgt['t'] = 1;
+
+  enum { BUF = 1 << 20 };
+  unsigned char *buf = (unsigned char *) malloc(BUF);
+  int in_header = 0, first = 1, ok = 1;
+  size_t n;
+  while (buf != NULL && (n = fread(buf, 1, BUF, fp)) > 0)
+  {
+    if (first) { if (buf[0] != '>') { ok = 0; break; } first = 0; }   // FASTA only
+    for (size_t i = 0; i < n; i++)
+    {
+      unsigned char c = buf[i];
+      if (in_header) { if (c == '\n') in_header = 0; continue; }
+      if (acgt[c]) { run++; continue; }
+      if (c == '\n' || c == '\r') continue;          // line wrap does not break a run
+      if (c == '>') in_header = 1;                    // new record breaks the run
+      if (run > 0)                                    // any other char (N, IUPAC, ...) breaks it too
+      {
+        if (run > (unsigned long long) kmax) { big_n++; big_sum += run; }
+        else cnt[run]++;
+        run = 0;
+      }
+    }
+  }
+  if (run > 0)
+  {
+    if (run > (unsigned long long) kmax) { big_n++; big_sum += run; }
+    else cnt[run]++;
+  }
+  free(buf);
+  if (piped) pclose(fp); else fclose(fp);
+  if (!ok || first) { free(cnt); return 0; }
+
+  Texact = (double *) calloc((size_t) kmax + 1, sizeof(double));
+  if (Texact == NULL) { free(cnt); return 0; }
+  unsigned long long Nk = big_n, Sk = big_sum;
+  for (int k = kmax; k >= 1; k--)
+  {
+    Nk += cnt[k];
+    Sk += (unsigned long long) k * cnt[k];
+    Texact[k] = (double) Sk - (double) (k - 1) * (double) Nk;
+  }
+  kmax_glob = kmax;
+  free(cnt);
+  return 1;
 }
 
 static int parse_histex_counts(const char *path, double *unique, double *total)
@@ -181,7 +264,7 @@ static void run_one_k(int k, const char *input, const char *prefix,
 
   if (rc != 0 || access(hist_path, F_OK) != 0)
   {
-    fprintf(rf, "%d,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK\n", k);
+    fprintf(rf, "%d,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK\n", k);
     fclose(rf);
     return;   // keep fastk_log for debugging
   }
@@ -192,11 +275,13 @@ static void run_one_k(int k, const char *input, const char *prefix,
 
   double unique = 0.0, total = 0.0;
   if (rc2 != 0 || !parse_histex_counts(histex_path, &unique, &total))
-    fprintf(rf, "%d,ERROR_HISTEX,ERROR_HISTEX,ERROR_HISTEX\n", k);
+    fprintf(rf, "%d,ERROR_HISTEX,ERROR_HISTEX,ERROR_HISTEX,ERROR_HISTEX\n", k);
   else
   {
-    double frac = (total > 0.0) ? (unique / total) : 0.0;
-    fprintf(rf, "%d,%.0f,%.0f,%.6f\n", k, unique, total, frac);
+    // total_kmers = exact positions from ACGT runs; total_kmers_observed = histogram sum
+    double texact = (Texact != NULL && k <= kmax_glob) ? Texact[k] : total;
+    double frac = (texact > 0.0) ? (unique / texact) : 0.0;
+    fprintf(rf, "%d,%.0f,%.0f,%.6f,%.0f\n", k, unique, texact, frac, total);
   }
   fclose(rf);
 
@@ -282,6 +367,15 @@ int main(int argc, char *argv[])
     nk = idx;
   }
 
+  // ---- exact T(k) from ACGT run lengths (computed once, inherited by the forked jobs) ----
+  {
+    int kmax = 0;
+    for (int i = 0; i < nk; i++) if (ks[i] > kmax) kmax = ks[i];
+    if (!scan_acgt_runs(input, kmax))
+      fprintf(stderr, "Kplex: WARNING: could not scan %s as FASTA; total_kmers falls back to the "
+                      "FastK histogram sum (undercounts saturated k-mers)\n", input);
+  }
+
   // ---- resource-aware parallel plan ----
   long cores = detect_cores();
   double avail_ram = detect_avail_ram_bytes();
@@ -358,7 +452,7 @@ int main(int argc, char *argv[])
     free(auto_prefix); free(auto_out); free(ks);
     return 1;
   }
-  fprintf(out, "k,unique_kmers,total_kmers,fraction_unique\n");
+  fprintf(out, "k,unique_kmers,total_kmers,fraction_unique,total_kmers_observed\n");
   for (int i = 0; i < nk; i++)
   {
     FILE *rf = fopen(rowfiles[i], "r");
@@ -366,12 +460,12 @@ int main(int argc, char *argv[])
     {
       char line[256];
       if (fgets(line, sizeof(line), rf)) fputs(line, out);
-      else fprintf(out, "%d,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK\n", ks[i]);
+      else fprintf(out, "%d,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK\n", ks[i]);
       fclose(rf);
       remove(rowfiles[i]);
     }
     else
-      fprintf(out, "%d,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK\n", ks[i]);
+      fprintf(out, "%d,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK,ERROR_FASTK\n", ks[i]);
     free(rowfiles[i]);
   }
   fclose(out);
